@@ -1,0 +1,25 @@
+# Git
+.git
+.gitignore
+
+# GitHub Actions
+.github
+
+# Python cache
+__pycache__
+*.py[cod]
+*.pyo
+
+# Logs and database (these belong on the mounted volume, not in the image)
+*.log
+*.db
+*.db-journal
+
+# Docker files (no need to copy these into the image itself)
+Dockerfile
+docker-compose.yml
+.dockerignore
+
+# OS clutter
+.DS_Store
+Thumbs.db
