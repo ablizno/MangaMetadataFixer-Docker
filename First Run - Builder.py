@@ -126,6 +126,18 @@ def process_files(directory, log_file, db_path, log_entries, total_files, batch_
         if processed_files_batch:
             mark_files_as_processed(db_path, processed_files_batch)
 
+def get_data_directory():
+    """Reads the data directory from the DATA_DIR environment variable."""
+    data_directory = os.environ.get("DATA_DIR", "").strip()
+    if not data_directory:
+        raise EnvironmentError(
+            "The DATA_DIR environment variable is not set. "
+            "Please set it to the full path of your data directory, e.g.:\n"
+            "  docker run -e DATA_DIR=/data ..."
+        )
+    os.makedirs(data_directory, exist_ok=True)
+    return data_directory
+
 def get_manga_directory():
     """Reads the manga directory from the MANGA_DIR environment variable."""
     manga_directory = os.environ.get("MANGA_DIR", "").strip()
@@ -143,19 +155,18 @@ def get_manga_directory():
 
 def main():
     """Main function to process .cbz files in a directory tree, running once and then closing with countdown."""
-    script_dir = os.path.dirname(os.path.abspath(__file__))
+    manga_directory = get_manga_directory()
+    data_dir = get_data_directory()
 
     # Cleanup SQLite journal files at the start
-    cleanup_sql_journal(script_dir)
-
-    manga_directory = get_manga_directory()
+    cleanup_sql_journal(data_dir)
 
     # Clear screen and prepare the log file
     clear_console()
     print("Manga Metadata Fixer by HDShock")
     print(f"Manga directory: {manga_directory}")
-    log_file = os.path.join(script_dir, "process_log.txt")
-    db_path = os.path.join(script_dir, "processed_files.db")
+    log_file = os.path.join(data_dir, "process_log.txt")
+    db_path = os.path.join(data_dir, "processed_files.db")
 
     # Initialize the database
     first_run = initialize_database(db_path)
