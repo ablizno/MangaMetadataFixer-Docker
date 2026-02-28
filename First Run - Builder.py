@@ -90,7 +90,7 @@ def print_progress_bar(current, total, bar_length=40):
     bar = '=' * filled_length + '-' * (bar_length - filled_length)
     print(f"\r[{bar}] {percent:.2f}% ({current}/{total})", end="")
 
-def process_files(directory, log_file, db_path, log_entries, total_files, batch_size=500):  # Changed batch size to 500
+def process_files(directory, log_file, db_path, log_entries, total_files, batch_size=500):
     """Processes .cbz files in the directory with a progress bar."""
     processed_files_batch = []
     processed_count = 0
@@ -127,17 +127,18 @@ def process_files(directory, log_file, db_path, log_entries, total_files, batch_
             mark_files_as_processed(db_path, processed_files_batch)
 
 def get_manga_directory():
-    """Prompts the user for the manga directory or loads it from a file."""
-    script_dir = os.path.dirname(os.path.abspath(__file__))
-    manga_location_file = os.path.join(script_dir, "Manga Library Location")
-
-    if os.path.exists(manga_location_file):
-        with open(manga_location_file, 'r') as file:
-            return file.read().strip()
-
-    manga_directory = input("Enter the full path to your Manga directory: ").strip()
-    with open(manga_location_file, 'w') as file:
-        file.write(manga_directory)
+    """Reads the manga directory from the MANGA_DIR environment variable."""
+    manga_directory = os.environ.get("MANGA_DIR", "").strip()
+    if not manga_directory:
+        raise EnvironmentError(
+            "The MANGA_DIR environment variable is not set. "
+            "Please set it to the full path of your Manga directory, e.g.:\n"
+            "  docker run -e MANGA_DIR=/manga ..."
+        )
+    if not os.path.isdir(manga_directory):
+        raise FileNotFoundError(
+            f"The directory specified by MANGA_DIR does not exist: {manga_directory}"
+        )
     return manga_directory
 
 def main():
@@ -152,6 +153,7 @@ def main():
     # Clear screen and prepare the log file
     clear_console()
     print("Manga Metadata Fixer by HDShock")
+    print(f"Manga directory: {manga_directory}")
     log_file = os.path.join(script_dir, "process_log.txt")
     db_path = os.path.join(script_dir, "processed_files.db")
 
