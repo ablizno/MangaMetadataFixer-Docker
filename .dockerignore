@@ -10,12 +10,12 @@ __pycache__
 *.py[cod]
 *.pyo
 
-# Logs and database (these belong on the mounted volume, not in the image)
+# Logs and database 
 *.log
 *.db
 *.db-journal
 
-# Docker files (no need to copy these into the image itself)
+# Docker files
 Dockerfile
 docker-compose.yml
 .dockerignore
