@@ -4,6 +4,9 @@ import zipfile
 import sqlite3
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
+# Detect if running without a TTY (e.g. Docker)
+IN_DOCKER = not os.isatty(1)
+
 def create_comicinfo_xml(series_name, title_name):
     """Creates an XML string for ComicInfo.xml."""
     import xml.etree.ElementTree as ET
@@ -12,29 +15,25 @@ def create_comicinfo_xml(series_name, title_name):
     title.text = title_name
     series = ET.SubElement(comic_info, "Series")
     series.text = series_name
-
     return ET.tostring(comic_info, encoding="utf-8", method="xml").decode("utf-8")
 
 def initialize_database(db_path):
     """Initializes the SQLite database to track processed files."""
-    first_run = not os.path.exists(db_path)
     conn = sqlite3.connect(db_path)
     cursor = conn.cursor()
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS processed_files (
             filepath TEXT PRIMARY KEY
         )
-    """
-    )
+    """)
     conn.commit()
     conn.close()
-    return first_run
 
-def cleanup_sql_journal(script_dir):
+def cleanup_sql_journal(data_dir):
     """Deletes SQLite journal files at the beginning to prevent locking issues."""
-    for file in os.listdir(script_dir):
+    for file in os.listdir(data_dir):
         if file.endswith(".db-journal"):
-            os.remove(os.path.join(script_dir, file))
+            os.remove(os.path.join(data_dir, file))
 
 def is_file_processed(db_path, filepath):
     """Checks if a file has already been processed."""
@@ -56,7 +55,7 @@ def mark_files_as_processed(db_path, filepaths):
 def process_cbz_file(filepath, log_file, db_path, processed_files_batch):
     """Checks if ComicInfo.xml exists in the .cbz file and creates one if not."""
     if is_file_processed(db_path, filepath):
-        return  # Skip already processed files
+        return
 
     with zipfile.ZipFile(filepath, 'a') as cbz:
         if "ComicInfo.xml" not in cbz.namelist():
@@ -68,137 +67,109 @@ def process_cbz_file(filepath, log_file, db_path, processed_files_batch):
             with open(log_file, 'a') as log:
                 log.write(log_entry)
 
-    # Add to the batch of processed files
     processed_files_batch.append(filepath)
 
 def check_log_size(log_file):
     """Checks the size of the log file and deletes it if it exceeds 50MB."""
     if os.path.exists(log_file):
-        file_size = os.path.getsize(log_file)
-        if file_size > 50 * 1024 * 1024:  # 50 MB
+        if os.path.getsize(log_file) > 50 * 1024 * 1024:
             print(f"Log file exceeds 50MB. Deleting {log_file}...")
             os.remove(log_file)
 
 def clear_console():
-    """Clears the console screen."""
-    os.system('cls' if os.name == 'nt' else 'clear')
+    """Clears the console screen, skipped in Docker."""
+    if not IN_DOCKER:
+        os.system('cls' if os.name == 'nt' else 'clear')
+
+_last_progress_pct = -1
 
 def print_progress_bar(current, total, bar_length=40):
-    """Prints a simple text-based progress bar on the same line."""
+    """Prints progress. In Docker, only logs at each 10% milestone."""
+    global _last_progress_pct
     percent = (current / total) * 100
-    filled_length = int(bar_length * current // total)
-    bar = '=' * filled_length + '-' * (bar_length - filled_length)
-    print(f"\r[{bar}] {percent:.2f}% ({current}/{total})", end="")
+    if IN_DOCKER:
+        pct_int = int(percent) // 10 * 10
+        if pct_int != _last_progress_pct:
+            print(f"Progress: {pct_int}% ({current}/{total})", flush=True)
+            _last_progress_pct = pct_int
+    else:
+        filled_length = int(bar_length * current // total)
+        bar = '=' * filled_length + '-' * (bar_length - filled_length)
+        print(f"\r[{bar}] {percent:.2f}% ({current}/{total})", end="")
 
-def process_files(directory, log_file, db_path, log_entries, total_files, batch_size=500):
+def process_files(directory, log_file, db_path, total_files, batch_size=500):
     """Processes .cbz files in the directory with a progress bar."""
     processed_files_batch = []
     processed_count = 0
-    start_time = time.time()
 
-    # Create a ThreadPoolExecutor to handle the file processing concurrently
     with ThreadPoolExecutor() as executor:
         futures = []
-        
         for root, _, files in os.walk(directory):
             for file in files:
                 if file.endswith(".cbz"):
                     filepath = os.path.join(root, file)
-                    if is_file_processed(db_path, filepath):  # Skip already processed files
+                    if is_file_processed(db_path, filepath):
                         continue
                     future = executor.submit(process_cbz_file, filepath, log_file, db_path, processed_files_batch)
                     futures.append(future)
 
-        # Track the completion of each file processing task
         for future in as_completed(futures):
             processed_count += 1
-
-            # Update progress bar every 10 files
             if processed_count % 10 == 0:
                 print_progress_bar(processed_count, total_files)
-
-            # Save progress to the database periodically (after every 500 files)
             if processed_count % batch_size == 0:
                 mark_files_as_processed(db_path, processed_files_batch)
-                processed_files_batch.clear()  # Clear the batch after committing
+                processed_files_batch.clear()
 
-        # Mark all processed files in a single batch after completion
         if processed_files_batch:
             mark_files_as_processed(db_path, processed_files_batch)
 
 def get_data_directory():
     """Reads the data directory from the DATA_DIR environment variable."""
-    data_directory = os.environ.get("DATA_DIR", "").strip()
-    if not data_directory:
-        raise EnvironmentError(
-            "The DATA_DIR environment variable is not set. "
-            "Please set it to the full path of your data directory, e.g.:\n"
-            "  docker run -e DATA_DIR=/data ..."
+    data_directory = os.environ.get("DATA_DIR", "/data").strip()
+    if not os.path.isdir(data_directory):
+        raise FileNotFoundError(
+            f"DATA_DIR does not exist or is not mounted: {data_directory}"
         )
-    os.makedirs(data_directory, exist_ok=True)
     return data_directory
 
 def get_manga_directory():
     """Reads the manga directory from the MANGA_DIR environment variable."""
-    manga_directory = os.environ.get("MANGA_DIR", "").strip()
-    if not manga_directory:
-        raise EnvironmentError(
-            "The MANGA_DIR environment variable is not set. "
-            "Please set it to the full path of your Manga directory, e.g.:\n"
-            "  docker run -e MANGA_DIR=/manga ..."
-        )
+    manga_directory = os.environ.get("MANGA_DIR", "/manga").strip()
     if not os.path.isdir(manga_directory):
         raise FileNotFoundError(
-            f"The directory specified by MANGA_DIR does not exist: {manga_directory}"
+            f"MANGA_DIR does not exist or is not mounted: {manga_directory}"
         )
     return manga_directory
 
 def main():
-    """Main function to process .cbz files in a directory tree, running once and then closing with countdown."""
+    """Main function to process .cbz files in a directory tree, running once."""
     manga_directory = get_manga_directory()
     data_dir = get_data_directory()
 
-    # Cleanup SQLite journal files at the start
     cleanup_sql_journal(data_dir)
 
-    # Clear screen and prepare the log file
     clear_console()
     print("Manga Metadata Fixer by HDShock")
     print(f"Manga directory: {manga_directory}")
+
     log_file = os.path.join(data_dir, "process_log.txt")
     db_path = os.path.join(data_dir, "processed_files.db")
 
-    # Initialize the database
-    first_run = initialize_database(db_path)
-
-    # Check the log file size
+    initialize_database(db_path)
     check_log_size(log_file)
 
-    print(f"\nLog file location: {log_file}\n")
+    print(f"Log file location: {log_file}")
 
-    # Count the total number of files to process
-    total_files = sum([len(files) for _, _, files in os.walk(manga_directory) if any(file.endswith('.cbz') for file in files)])
+    total_files = sum(
+        len([f for f in files if f.endswith('.cbz')])
+        for _, _, files in os.walk(manga_directory)
+    )
+    print(f"Total files to process: {total_files}", flush=True)
 
-    # Process files with progress bar and periodic database updates
-    log_entries = []
-    process_files(manga_directory, log_file, db_path, log_entries, total_files)
+    process_files(manga_directory, log_file, db_path, total_files)
 
-    # Display first scan complete message
-    clear_console()
-    print("Manga Metadata Fixer by HDShock")
-    print("\nFirst Scan complete!")
-
-    # Countdown timer before closing the console
-    countdown = 10  # Countdown in seconds
-    while countdown > 0:
-        clear_console()
-        print("Manga Metadata Fixer by HDShock")
-        print("\nFirst Scan complete!")
-        print(f"\nClosing in {countdown} seconds...")
-        time.sleep(1)
-        countdown -= 1
-
-    clear_console()  # Clear console before closing
+    print("First Scan complete!", flush=True)
 
 if __name__ == "__main__":
     main()

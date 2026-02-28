@@ -4,6 +4,9 @@ import zipfile
 import threading
 import sqlite3
 
+# Detect if running without a TTY (e.g. Docker)
+IN_DOCKER = not os.isatty(1)
+
 def create_comicinfo_xml(series_name, title_name):
     """Creates an XML string for ComicInfo.xml."""
     import xml.etree.ElementTree as ET
@@ -12,12 +15,10 @@ def create_comicinfo_xml(series_name, title_name):
     title.text = title_name
     series = ET.SubElement(comic_info, "Series")
     series.text = series_name
-
     return ET.tostring(comic_info, encoding="utf-8", method="xml").decode("utf-8")
 
 def initialize_database(db_path):
     """Initializes the SQLite database to track processed files."""
-    first_run = not os.path.exists(db_path)
     conn = sqlite3.connect(db_path)
     cursor = conn.cursor()
     cursor.execute("""
@@ -27,7 +28,6 @@ def initialize_database(db_path):
     """)
     conn.commit()
     conn.close()
-    return first_run
 
 def is_file_processed(db_path, filepath):
     """Checks if a file has already been processed."""
@@ -49,7 +49,7 @@ def mark_file_as_processed(db_path, filepath):
 def process_cbz_file(filepath, log_file, db_path):
     """Checks if ComicInfo.xml exists in the .cbz file and creates one if not."""
     if is_file_processed(db_path, filepath):
-        return  # Skip already processed files
+        return
 
     with zipfile.ZipFile(filepath, 'a') as cbz:
         if "ComicInfo.xml" not in cbz.namelist():
@@ -58,29 +58,29 @@ def process_cbz_file(filepath, log_file, db_path):
             comicinfo_content = create_comicinfo_xml(series_name, title_name)
             cbz.writestr("ComicInfo.xml", comicinfo_content)
             log_entry = f"{time.strftime('%Y-%m-%d %H:%M:%S')} - Added ComicInfo.xml to {filepath}\n"
-            print(log_entry.strip())
+            print(log_entry.strip(), flush=True)
             with open(log_file, 'a') as log:
                 log.write(log_entry)
-        else:
-            print(f"{time.strftime('%Y-%m-%d %H:%M:%S')} - ComicInfo.xml already exists in {filepath}")
+        # No log output for files that already have ComicInfo.xml
 
-    # Mark the file as processed, whether or not an XML file was added
     mark_file_as_processed(db_path, filepath)
 
 def check_log_size(log_file):
     """Checks the size of the log file and deletes it if it exceeds 50MB."""
     if os.path.exists(log_file):
-        file_size = os.path.getsize(log_file)
-        if file_size > 50 * 1024 * 1024:  # 50 MB
+        if os.path.getsize(log_file) > 50 * 1024 * 1024:
             print(f"Log file exceeds 50MB. Deleting {log_file}...")
             os.remove(log_file)
 
 def clear_console():
-    """Clears the console screen."""
-    os.system('cls' if os.name == 'nt' else 'clear')
+    """Clears the console screen, skipped in Docker."""
+    if not IN_DOCKER:
+        os.system('cls' if os.name == 'nt' else 'clear')
 
-def loading_animation(stop_flag, first_run):
-    """Displays a loading animation."""
+def loading_animation(stop_flag):
+    """Displays a loading animation (skipped in Docker)."""
+    if IN_DOCKER:
+        return
     animation = ["", ".", "..", "..."]
     while not stop_flag.is_set():
         for frame in animation:
@@ -88,8 +88,6 @@ def loading_animation(stop_flag, first_run):
                 break
             clear_console()
             print("Manga Metadata Fixer by HDShock")
-            if first_run:
-                print("\nFirst run  - Building Database! (This could take a while)")
             print("\nScanning New Manga" + frame)
             print("\n\nProcess Queue:\n\n")
             time.sleep(0.5)
@@ -104,28 +102,19 @@ def process_files(directory, log_file, db_path):
 
 def get_data_directory():
     """Reads the data directory from the DATA_DIR environment variable."""
-    data_directory = os.environ.get("DATA_DIR", "").strip()
-    if not data_directory:
-        raise EnvironmentError(
-            "The DATA_DIR environment variable is not set. "
-            "Please set it to the full path of your data directory, e.g.:\n"
-            "  docker run -e DATA_DIR=/data ..."
+    data_directory = os.environ.get("DATA_DIR", "/data").strip()
+    if not os.path.isdir(data_directory):
+        raise FileNotFoundError(
+            f"DATA_DIR does not exist or is not mounted: {data_directory}"
         )
-    os.makedirs(data_directory, exist_ok=True)
     return data_directory
 
 def get_manga_directory():
     """Reads the manga directory from the MANGA_DIR environment variable."""
-    manga_directory = os.environ.get("MANGA_DIR", "").strip()
-    if not manga_directory:
-        raise EnvironmentError(
-            "The MANGA_DIR environment variable is not set. "
-            "Please set it to the full path of your Manga directory, e.g.:\n"
-            "  docker run -e MANGA_DIR=/manga ..."
-        )
+    manga_directory = os.environ.get("MANGA_DIR", "/manga").strip()
     if not os.path.isdir(manga_directory):
         raise FileNotFoundError(
-            f"The directory specified by MANGA_DIR does not exist: {manga_directory}"
+            f"MANGA_DIR does not exist or is not mounted: {manga_directory}"
         )
     return manga_directory
 
@@ -135,45 +124,27 @@ def main():
     data_dir = get_data_directory()
 
     while True:
-        # Clear screen and prepare the log file
-        clear_console()
-        print("Manga Metadata Fixer by HDShock")
         log_file = os.path.join(data_dir, "process_log.txt")
         db_path = os.path.join(data_dir, "processed_files.db")
 
-        # Initialize the database
-        first_run = initialize_database(db_path)
-
-        # Check the log file size
+        initialize_database(db_path)
         check_log_size(log_file)
 
-        print(f"\nLog file location: {log_file}\n")
+        print("Manga Metadata Fixer by HDShock - Scanning...", flush=True)
 
-        # Setup for loading animation
         stop_flag = threading.Event()
-        animation_thread = threading.Thread(target=loading_animation, args=(stop_flag, first_run))
+        animation_thread = threading.Thread(target=loading_animation, args=(stop_flag,))
         animation_thread.start()
 
-        # Process files while the animation runs
         try:
             process_files(manga_directory, log_file, db_path)
         finally:
-            stop_flag.set()  # Stop the loading animation
-            animation_thread.join()  # Ensure the thread exits cleanly
+            stop_flag.set()
+            animation_thread.join()
 
-        # Countdown timer for the next run
-        wait_time = 300  # 5 minutes
-        interval = 1  # Update every second
-        while wait_time > 0:
-            clear_console()
-            print("Manga Metadata Fixer by HDShock")
-            print(f"MANGA SCAN COMPLETED SUCCESSFULLY")
-            print(f"Log file Exported to: {log_file}")
-            print("\n-When the log file exceeds 50MB it will be deleted!-")
-            print("\nNext Run:")
-            print(f"Time remaining: {wait_time // 60} minutes and {wait_time % 60} seconds")
-            time.sleep(interval)
-            wait_time -= interval
+        print(f"Scan complete. Next run in 5 minutes. Log: {log_file}", flush=True)
+
+        time.sleep(300)
 
 if __name__ == "__main__":
     main()
