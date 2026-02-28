@@ -1,6 +1,6 @@
 <h1>Manga Metadata Fixer - Docker Container</h1>
 
-<h1> This is a WIP - Use at your own risk/h1>
+<h1> This is a WIP - Use at your own risk</h1>
 
 <p>Original Script here: https://github.com/hdshock/MangaMetadataFixer</p>
 
