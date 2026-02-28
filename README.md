@@ -1,5 +1,7 @@
 <h1>Manga Metadata Fixer - Docker Container</h1>
 
+<h1> This is a WIP do not use yet as it is incomplete</h1>
+
 <p>These are Python scripts designed to bridge the gap between <code>.CBZ</code> manga automatically downloaded from FMD2 and indexing by Komf for Kavita.</p>
 
 <p>Now as a Docker container!</p>
