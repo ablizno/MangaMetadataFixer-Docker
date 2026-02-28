@@ -2,6 +2,8 @@
 
 <h1> This is a WIP do not use yet as it is incomplete</h1>
 
+<p>Original Script here: https://github.com/hdshock/MangaMetadataFixer</p>
+
 <p>These are Python scripts designed to bridge the gap between <code>.CBZ</code> manga automatically downloaded from FMD2 and indexing by Komf for Kavita.</p>
 
 <p>Now as a Docker container!</p>
@@ -19,24 +21,6 @@
   <li>Displays a simple text-based progress bar to show the status of the scan.</li>
 </ul>
 <p><em>Note: For the "First Run" script only.</em></p>
-
-<h2>Requirements</h2>
-<ul>
-  <li>Python 3.x</li>
-  <li><code>zipfile</code> and <code>sqlite3</code> (included in Python's standard library)</li>
-</ul>
-<p>The program works out-of-the-box without any external dependencies.</p>
-
-<h2>Installation</h2>
-<ol>
-  <li>Download the scripts and place them in a directory.</li>
-  <li>Ensure that your manga library is accessible and organized.</li>
-  <li>Make sure your <code>.cbz</code> files are properly named, and the folder name containing them matches the manga title. (FMD2 does this automatically.)</li>
-</ol>
-
-<h2>Setup</h2>
-<p>The script will look for a file called <code>Manga Library Location</code> in the same directory to determine the path to your manga library. If the file does not exist, it will prompt you to enter the directory path.</p>
-<p>An SQLite database (<code>processed_files.db</code>) is used to track which files have been processed, preventing redundant operations.</p>
 
 <h2>How It Works</h2>
 <ol>
