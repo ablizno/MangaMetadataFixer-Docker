@@ -1,0 +1,12 @@
+services:
+  mangametadatafixer:
+    image: ablizno/mangametadatafixer:latest
+    container_name: mangametadatafixer
+    user: 1000:1000
+    environment:
+      - MANGA_DIR=/manga
+      - DATA_DIR=/data
+    volumes:
+      - /path/to/manga:/manga
+      - /path/to/data:/data
+    restart: unless-stopped
